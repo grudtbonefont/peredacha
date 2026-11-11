@@ -82,3 +82,16 @@ form label input{display:block;width:100%;margin-top:6px;padding:11px 12px;borde
 }
 input[hidden]{display:none!important}
 .logout{font-size:13px;color:var(--muted);border:1px solid var(--line);background:#fff;border-radius:10px;padding:6px 10px}
+
+.msg .time .edited{font-style:italic}
+.msg .time button.more{text-decoration:none;opacity:.9;padding:2px 4px;margin:-2px 0}
+.sheet{position:fixed;inset:0;background:rgba(15,15,30,.45);z-index:25;display:flex;align-items:center;justify-content:center;padding:16px}
+.sheet-panel{background:#fff;border-radius:18px;width:100%;max-width:400px;padding:12px;box-shadow:0 10px 40px rgba(0,0,0,.2);max-height:90vh;overflow:auto}
+.sheet-title{font-weight:700;padding:6px 8px 10px;word-break:break-all}
+.sheet-btn{display:block;width:100%;text-align:left;border:0;background:transparent;padding:13px 10px;border-radius:10px;font-size:16px;color:var(--ink);text-decoration:none}
+.sheet-btn:hover{background:var(--bg)}
+.sheet-btn.danger{color:#d92d20}
+.sheet-btn.cancel{text-align:center;color:var(--muted)}
+.sheet-input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:10px;font-size:16px;resize:vertical}
+.sheet-row{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+@media (max-width:760px){.sheet{align-items:flex-end;padding:0}.sheet-panel{max-width:none;border-radius:18px 18px 0 0;padding-bottom:calc(12px + env(safe-area-inset-bottom))}}

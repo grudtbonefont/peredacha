@@ -54,6 +54,12 @@ async function migrate() {
     );
     CREATE INDEX IF NOT EXISTS fd_messages_pair ON fd_messages (sender_id, recipient_id, id);
     CREATE INDEX IF NOT EXISTS fd_messages_rcpt ON fd_messages (recipient_id, id);
+    CREATE SEQUENCE IF NOT EXISTS fd_rev_seq;
+    ALTER TABLE fd_messages ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+    ALTER TABLE fd_messages ADD COLUMN IF NOT EXISTS rev BIGINT;
+    UPDATE fd_messages SET rev = nextval('fd_rev_seq') WHERE rev IS NULL;
+    ALTER TABLE fd_messages ALTER COLUMN rev SET DEFAULT nextval('fd_rev_seq');
+    CREATE INDEX IF NOT EXISTS fd_messages_rev ON fd_messages (rev);
   `);
 }
 
@@ -167,6 +173,7 @@ app.get('/api/conversations', auth, wrap(async (req, res) => {
 function msgRow(m) {
   return {
     id: m.id, sender_id: m.sender_id, recipient_id: m.recipient_id, body: m.body, created_at: m.created_at,
+    edited_at: m.edited_at || null, rev: Number(m.rev || 0),
     file: m.file_id ? { id: m.file_id, name: m.file_name, mime: m.file_mime, size: m.file_size, share_token: m.share_token } : null,
   };
 }
@@ -181,10 +188,16 @@ async function findUser(name) {
 app.get('/api/messages/:username', auth, wrap(async (req, res) => {
   const other = await findUser(req.params.username);
   if (!other) return res.status(404).json({ error: 'Пользователь не найден' });
+  // since = последний известный клиенту rev: отдаём и новые, и изменённые сообщения
+  const since = Number(req.query.since || 0);
   const after = Number(req.query.after || 0);
-  const r = await pool.query(`${MSG_SELECT}
-    WHERE ((m.sender_id = $1 AND m.recipient_id = $2) OR (m.sender_id = $2 AND m.recipient_id = $1)) AND m.id > $3
-    ORDER BY m.id DESC LIMIT 200`, [req.user.id, other.id, after]);
+  const r = since > 0
+    ? await pool.query(`${MSG_SELECT}
+        WHERE ((m.sender_id = $1 AND m.recipient_id = $2) OR (m.sender_id = $2 AND m.recipient_id = $1)) AND m.rev > $3
+        ORDER BY m.id DESC LIMIT 200`, [req.user.id, other.id, since])
+    : await pool.query(`${MSG_SELECT}
+        WHERE ((m.sender_id = $1 AND m.recipient_id = $2) OR (m.sender_id = $2 AND m.recipient_id = $1)) AND m.id > $3
+        ORDER BY m.id DESC LIMIT 200`, [req.user.id, other.id, after]);
   await pool.query('UPDATE fd_messages SET read_at = now() WHERE sender_id = $1 AND recipient_id = $2 AND read_at IS NULL', [other.id, req.user.id]);
   res.json({ user: other, messages: r.rows.reverse().map(msgRow) });
 }));
@@ -225,6 +238,43 @@ app.post('/api/messages/:username', auth, (req, res, next) => {
     [req.user.id, other.id, body || null, fileId]);
   const r = await pool.query(`${MSG_SELECT} WHERE m.id = $1`, [m.rows[0].id]);
   res.json({ message: msgRow(r.rows[0]) });
+}));
+
+app.patch('/api/messages/:id', auth, wrap(async (req, res) => {
+  const id = Number(req.params.id) || 0;
+  const cur = await pool.query('SELECT sender_id, recipient_id, file_id FROM fd_messages WHERE id = $1', [id]);
+  const m = cur.rows[0];
+  if (!m || (m.sender_id !== req.user.id && m.recipient_id !== req.user.id)) return res.status(404).json({ error: 'Сообщение не найдено' });
+  if (m.sender_id !== req.user.id) return res.status(403).json({ error: 'Изменять можно только свои сообщения' });
+  const body = String(req.body.text == null ? '' : req.body.text).slice(0, 5000).trim();
+  if (!body && !m.file_id) return res.status(400).json({ error: 'Текст не может быть пустым' });
+  await pool.query("UPDATE fd_messages SET body = $1, edited_at = now(), rev = nextval('fd_rev_seq') WHERE id = $2", [body || null, id]);
+  const r = await pool.query(`${MSG_SELECT} WHERE m.id = $1`, [id]);
+  res.json({ message: msgRow(r.rows[0]) });
+}));
+
+function cleanName(newName, oldName) {
+  let n = String(newName || '').replace(/[\u0000-\u001f\u007f\/\\:*?"<>|]/g, '').replace(/\s+/g, ' ').trim().replace(/^\.+/, '');
+  const oldExt = (oldName.match(/\.[^.\s]{1,10}$/) || [''])[0];
+  const newExt = (n.match(/\.[^.\s]{1,10}$/) || [''])[0];
+  if (oldExt && !newExt) n += oldExt; // сохраняем расширение, если его стёрли
+  if (!n || n === oldExt) return null;
+  return n.slice(0, 200);
+}
+
+app.patch('/api/files/:id', auth, wrap(async (req, res) => {
+  const id = Number(req.params.id) || 0;
+  const cur = await pool.query(`SELECT f.owner_id, f.name FROM fd_files f WHERE f.id = $1 AND (f.owner_id = $2 OR EXISTS
+     (SELECT 1 FROM fd_messages m WHERE m.file_id = f.id AND (m.sender_id = $2 OR m.recipient_id = $2)))`, [id, req.user.id]);
+  const f = cur.rows[0];
+  if (!f) return res.status(404).json({ error: 'Файл не найден' });
+  if (f.owner_id !== req.user.id) return res.status(403).json({ error: 'Переименовать можно только свои файлы' });
+  const name = cleanName(req.body.name, f.name);
+  if (!name) return res.status(400).json({ error: 'Введите имя файла' });
+  await pool.query('UPDATE fd_files SET name = $1 WHERE id = $2', [name, id]);
+  await pool.query("UPDATE fd_messages SET rev = nextval('fd_rev_seq') WHERE file_id = $1", [id]);
+  const r = await pool.query(`${MSG_SELECT} WHERE m.file_id = $1 ORDER BY m.id LIMIT 1`, [id]);
+  res.json({ name, message: r.rows[0] ? msgRow(r.rows[0]) : null });
 }));
 
 app.delete('/api/messages/:id', auth, wrap(async (req, res) => {

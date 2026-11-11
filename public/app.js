@@ -1,7 +1,7 @@
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
-  var me = null, maxMb = 20, current = null, lastId = 0, pollTimer = null, convTimer = null, mode = 'login', pendingFile = null, sending = false;
+  var me = null, maxMb = 20, current = null, lastId = 0, lastRev = 0, msgs = {}, pollTimer = null, convTimer = null, mode = 'login', pendingFile = null, sending = false;
 
   function api(method, url, body) {
     var opts = { method: method, headers: {}, credentials: 'same-origin' };
@@ -94,7 +94,7 @@
 
   // ---------- чат ----------
   function openChat(username) {
-    current = username; lastId = 0; lastDay = '';
+    current = username; lastId = 0; lastRev = 0; msgs = {}; lastDay = '';
     location.hash = encodeURIComponent(username);
     $('messages').innerHTML = '';
     $('empty').classList.add('hidden'); $('chatView').classList.remove('hidden'); $('app').classList.add('in-chat');
@@ -109,7 +109,7 @@
   var lastDay = '';
   function fetchMessages(first) {
     var who = current;
-    api('GET', '/api/messages/' + encodeURIComponent(who) + '?after=' + lastId).then(function (d) {
+    api('GET', '/api/messages/' + encodeURIComponent(who) + (lastRev ? '?since=' + lastRev : '?after=' + lastId)).then(function (d) {
       if (who !== current) return;
       if (first) { current = d.user.username; }
       if (d.messages.length) { appendMessages(d.messages); if (!first) loadConvs(); }
@@ -127,10 +127,12 @@
     }
     if (m.body) html += '<div class="text">' + linkify(esc(m.body)) + '</div>';
     var actions = '';
-    if (m.file && /^image\//.test(m.file.mime)) actions += '<a href="/api/files/' + m.file.id + '?download=1" download="' + esc(m.file.name) + '">скачать</a>';
-    if (m.file) actions += '<button data-share="' + m.file.id + '">ссылка</button>';
-    if (mine) actions += '<button data-del="' + m.id + '">удалить</button>';
-    html += '<div class="time">' + actions + '<span>' + fmtTime(m.created_at) + '</span></div>';
+    if (mine) actions += '<button class="more" data-menu="' + m.id + '" title="Действия">⋯ изменить</button>';
+    else {
+      if (m.file && /^image\//.test(m.file.mime)) actions += '<a href="/api/files/' + m.file.id + '?download=1" download="' + esc(m.file.name) + '">скачать</a>';
+      if (m.file) actions += '<button data-share="' + m.file.id + '">ссылка</button>';
+    }
+    html += '<div class="time">' + actions + (m.edited_at ? '<span class="edited" title="Изменено ' + esc(new Date(m.edited_at).toLocaleString('ru-RU')) + '">изменено</span>' : '') + '<span>' + fmtTime(m.created_at) + '</span></div>';
     return '<div class="msg' + (mine ? ' mine' : '') + '" data-id="' + m.id + '">' + html + '</div>';
   }
   function linkify(s) { return s.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:inherit">$1</a>'); }
@@ -139,7 +141,10 @@
     var atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120 || lastId === 0;
     var html = '';
     list.forEach(function (m) {
-      if (m.id <= lastId || box.querySelector('[data-id="' + m.id + '"]')) return;
+      lastRev = Math.max(lastRev, m.rev || 0); msgs[m.id] = m;
+      var ex = box.querySelector('.msg[data-id="' + m.id + '"]');
+      if (ex) { ex.outerHTML = renderMsg(m); return; }
+      if (m.id <= lastId) return;
       var day = fmtDay(m.created_at); if (day !== lastDay) { html += '<div class="day">' + day + '</div>'; lastDay = day; }
       html += renderMsg(m); lastId = Math.max(lastId, m.id);
     });
@@ -148,7 +153,8 @@
   }
   $('messages').onclick = function (e) {
     var t = e.target;
-    if (t.matches('img.photo')) { $('viewerImg').src = t.dataset.full; $('viewer').classList.remove('hidden'); }
+    if (t.dataset.menu) { openMenu(msgs[t.dataset.menu]); }
+    else if (t.matches('img.photo')) { $('viewerImg').src = t.dataset.full; $('viewer').classList.remove('hidden'); }
     else if (t.dataset.del) {
       if (!confirm('Удалить сообщение?')) return;
       api('DELETE', '/api/messages/' + t.dataset.del).then(function () { var el = t.closest('.msg'); el.remove(); loadConvs(); }).catch(function (e) { toast(e.message); });
@@ -160,6 +166,73 @@
       }).catch(function (e) { toast(e.message); });
     }
   };
+  // ---------- меню своего сообщения ----------
+  function closeSheet() { $('sheet').classList.add('hidden'); $('sheetBody').innerHTML = ''; }
+  $('sheet').onclick = function (e) { if (e.target === $('sheet')) closeSheet(); };
+  function openSheet(html) { $('sheetBody').innerHTML = html; $('sheet').classList.remove('hidden'); }
+  function openMenu(m) {
+    if (!m) return;
+    var b = [];
+    b.push('<button class="sheet-btn" data-act="edit">✏️ ' + (m.body ? 'Изменить текст' : 'Добавить подпись') + '</button>');
+    if (m.file) {
+      b.push('<button class="sheet-btn" data-act="rename">🏷️ Переименовать файл</button>');
+      b.push('<a class="sheet-btn" data-act="dl" href="/api/files/' + m.file.id + '?download=1" download="' + esc(m.file.name) + '">⬇️ Скачать</a>');
+      b.push('<button class="sheet-btn" data-act="share">🔗 Публичная ссылка</button>');
+    }
+    b.push('<button class="sheet-btn danger" data-act="del">🗑️ Удалить</button>');
+    b.push('<button class="sheet-btn cancel" data-act="cancel">Отмена</button>');
+    openSheet('<div class="sheet-title">' + esc(m.file ? m.file.name : (m.body || '').slice(0, 60)) + '</div>' + b.join(''));
+    $('sheetBody').onclick = function (e) {
+      var a = e.target.closest('[data-act]'); if (!a) return;
+      var act = a.dataset.act;
+      if (act === 'dl') { setTimeout(closeSheet, 100); return; }
+      if (act === 'cancel') return closeSheet();
+      if (act === 'edit') return editForm(m);
+      if (act === 'rename') return renameForm(m);
+      closeSheet();
+      if (act === 'share') shareFile(m.file.id);
+      if (act === 'del') {
+        if (!confirm('Удалить сообщение?')) return;
+        api('DELETE', '/api/messages/' + m.id).then(function () { var el = document.querySelector('.msg[data-id="' + m.id + '"]'); if (el) el.remove(); loadConvs(); }).catch(function (er) { toast(er.message); });
+      }
+    };
+  }
+  function formSheet(title, fieldHtml, onSave) {
+    openSheet('<form id="sheetForm"><div class="sheet-title">' + title + '</div>' + fieldHtml +
+      '<div class="sheet-row"><button type="button" class="btn" id="sheetCancel">Отмена</button><button class="btn primary" type="submit">Сохранить</button></div></form>');
+    var f = $('sheetForm'), inp = f.querySelector('[name=v]');
+    $('sheetBody').onclick = null;
+    $('sheetCancel').onclick = closeSheet;
+    setTimeout(function () { inp.focus(); }, 50);
+    f.onsubmit = function (e) {
+      e.preventDefault(); var btn = f.querySelector('[type=submit]'); btn.disabled = true;
+      onSave(inp.value).then(function (d) { if (d && d.message) appendMessages([d.message]); closeSheet(); loadConvs(); })
+        .catch(function (er) { toast(er.message); btn.disabled = false; });
+    };
+    return inp;
+  }
+  function editForm(m) {
+    var inp = formSheet(m.body ? 'Изменить текст' : 'Подпись к файлу', '<textarea name="v" class="sheet-input" rows="4" maxlength="5000"></textarea>', function (v) {
+      return api('PATCH', '/api/messages/' + m.id, { text: v });
+    });
+    inp.value = m.body || '';
+  }
+  function renameForm(m) {
+    var inp = formSheet('Новое имя файла', '<input name="v" class="sheet-input" maxlength="200" autocomplete="off"><div class="muted" style="font-size:12px;margin-top:6px">Если убрать расширение, оно сохранится автоматически.</div>', function (v) {
+      return api('PATCH', '/api/files/' + m.file.id, { name: v });
+    });
+    inp.value = m.file.name;
+    var dot = m.file.name.lastIndexOf('.');
+    setTimeout(function () { try { inp.setSelectionRange(0, dot > 0 ? dot : m.file.name.length); } catch (er) {} }, 60);
+  }
+  function shareFile(id) {
+    api('POST', '/api/files/' + id + '/share').then(function (d) {
+      var done = function () { toast('Публичная ссылка скопирована: ' + d.url); };
+      if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(d.url).then(done, function () { prompt('Ссылка на файл:', d.url); });
+      else prompt('Ссылка на файл (её можно открыть без входа):', d.url);
+    }).catch(function (e) { toast(e.message); });
+  }
+
   $('viewer').onclick = function () { $('viewer').classList.add('hidden'); $('viewerImg').src = ''; };
 
   // ---------- отправка ----------
