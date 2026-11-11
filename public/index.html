@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Передача — файлы, фото и сообщения</title>
+<meta name="theme-color" content="#4f46e5">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div id="auth" class="auth hidden">
+  <div class="card">
+    <div class="logo"><img src="/icon.svg" alt=""> <span>Передача</span></div>
+    <p class="muted">Отправляйте файлы, фото и сообщения другим людям. Работает без VPN.</p>
+    <div class="tabs">
+      <button class="tab active" data-mode="login">Вход</button>
+      <button class="tab" data-mode="register">Регистрация</button>
+    </div>
+    <form id="authForm">
+      <label>Имя пользователя<input name="username" autocomplete="username" required minlength="3" maxlength="24"></label>
+      <label>Пароль<input name="password" type="password" autocomplete="current-password" required minlength="6"></label>
+      <button class="btn primary" type="submit" id="authBtn">Войти</button>
+      <div class="error" id="authErr"></div>
+    </form>
+  </div>
+</div>
+
+<div id="app" class="app hidden">
+  <aside id="side" class="side">
+    <header class="side-head">
+      <div class="logo small"><img src="/icon.svg" alt=""> <span>Передача</span></div>
+      <button class="logout" id="logoutBtn">Выйти</button>
+    </header>
+    <div class="me">Вы вошли как <b id="meName"></b></div>
+    <div class="search"><input id="search" placeholder="Найти пользователя…" autocomplete="off"></div>
+    <div id="searchResults" class="list"></div>
+    <div class="list-title">Диалоги</div>
+    <div id="convs" class="list"></div>
+  </aside>
+  <main id="chat" class="chat">
+    <div id="empty" class="empty">
+      <div class="empty-icon">📨</div>
+      <h2>Выберите, кому отправить</h2>
+      <p class="muted">Найдите пользователя по имени слева или откройте «Избранное», чтобы перекинуть файлы между своими устройствами.</p>
+      <button class="btn" id="selfBtn">⭐ Избранное (себе)</button>
+    </div>
+    <div id="chatView" class="chat-view hidden">
+      <header class="chat-head">
+        <button class="icon-btn back" id="backBtn" title="Назад">←</button>
+        <div class="avatar" id="chatAvatar"></div>
+        <div class="chat-name" id="chatName"></div>
+      </header>
+      <div id="messages" class="messages"></div>
+      <div id="dropHint" class="drop-hint hidden">Отпустите файл, чтобы прикрепить</div>
+      <form id="sendForm" class="composer">
+        <div id="attach" class="attach hidden"><span id="attachName"></span><button type="button" class="icon-btn" id="attachClear">✕</button></div>
+        <div class="row">
+          <label class="icon-btn clip" title="Прикрепить файл или фото">📎<input type="file" id="fileInput" hidden></label>
+          <label class="icon-btn clip" title="Фото с камеры">📷<input type="file" id="photoInput" accept="image/*" hidden></label>
+          <textarea id="text" rows="1" placeholder="Сообщение…" maxlength="5000"></textarea>
+          <button class="btn primary send" id="sendBtn" type="submit">➤</button>
+        </div>
+        <div class="progress hidden" id="progress"><div id="bar"></div></div>
+        <div class="hint muted">Любые файлы до <span class="maxmb">20</span> МБ. Можно перетащить файл или вставить фото (Ctrl+V).</div>
+      </form>
+    </div>
+  </main>
+</div>
+<div id="viewer" class="viewer hidden"><img id="viewerImg" alt=""></div>
+<div id="toast" class="toast hidden"></div>
+<script src="/app.js"></script>
+</body>
+</html>
